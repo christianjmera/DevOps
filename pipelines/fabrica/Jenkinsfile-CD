@@ -1,0 +1,22 @@
+pipeline {
+    agent any
+
+stages {
+    stage('Deploy MS-Aceprechdocumento') {
+     steps {
+        echo "Conexion a Docker Registry"
+        echo "ejemplo desarrolladores"
+         script {
+sh '''
+ssh -tt root@10.18.1.142 << EOF
+docker login gtharbor.codesa.com.co --username=devops --password=${password}
+docker pull gtharbor.codesa.com.co/fabrica/ms_aceprechdocumento_facturacion_electronica:latest
+docker run --name ms_aceprechdocumento --restart always -d -p 9595:9595 gtharbor.codesa.com.co/fabrica/ms_aceprechdocumento_facturacion_electronica:latest
+exit
+EOF
+'''
+                }
+             }
+        }
+    }
+}

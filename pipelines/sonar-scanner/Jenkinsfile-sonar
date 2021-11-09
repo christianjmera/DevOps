@@ -1,0 +1,47 @@
+pipeline {
+    agent {label 'master'}
+    
+    environment{
+        
+        WORKSPACE = "/var/jenkins_home/workspace/${job_name}/${project_name}"
+        PATH_SCM = "$WORKSPACE/TRIGGERS/${repository_name}"
+        PATH_JENKINS = "$WORKSPACE/PIPELINE/${repository_name}"
+
+        SH_FOLDER = "$PATH_JENKINS/sonar-scanner/sh-files"
+        CLEAN_BRANCH_SH = "$SH_FOLDER/clear-branch.sh"
+    }
+ 
+    stages {
+        stage('Execution permissions'){
+            steps{
+                sh "chmod -R +x ${SH_FOLDER}"
+            }
+        }     
+                
+        stage('SonarQube analysis') {
+          steps {
+             script {
+                    def scannerHome = tool 'sonar-scanner_4.5';
+                    withSonarQubeEnv('sonarqube_7.9') {
+                        sh """${tool('sonar-scanner_4.5')}/bin/sonar-scanner \
+                        -Dsonar.projectKey=${REPOSITORY_NAME} \
+                        -Dsonar.projectName=${REPOSITORY_NAME} \
+                        -Dsonar.sources=${PATH_SCM}/src \
+                        -Dsonar.projectBaseDir=${PATH_SCM}/src \
+                        -Dsonar.language=java \
+                        -Dsonar.java.binaries=${PATH_SCM}/src \
+                        -Dsonar.projectVersion=${BUILD_NUMBER}"""
+                    }
+                }
+            }
+        }
+    }
+    post {
+        success{
+            sh('$CLEAN_BRANCH_SH $PATH_SCM $PATH_JENKINS')
+        }
+        failure{
+            sh('$CLEAN_BRANCH_SH $PATH_SCM $PATH_JENKINS')
+        }
+    }   
+}

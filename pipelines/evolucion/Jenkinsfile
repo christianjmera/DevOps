@@ -1,0 +1,190 @@
+pipeline{
+    agent{label 'master'}
+
+    environment{
+        WORKSPACE = "/var/jenkins_home/workspace/${job_name}/${project_name}"
+        PATH_SCM = "$WORKSPACE/TRIGGERS/${repository_name}"
+        PATH_JENKINS = "$WORKSPACE/PIPELINE/${repository_name}"
+
+        /*Rutas de Script*/
+        SH_FOLDER = "$PATH_JENKINS/devops-files/sh-files"
+        GET_BRANCH_SH = "$SH_FOLDER/get-branch.sh"
+        GET_BRANCH_TYPE_SH = "$SH_FOLDER/get-branch-type.sh"
+        TAG_BRANCH_SH = "$SH_FOLDER/tag-branch.sh"
+        LIST_CHANGE_SH = "$SH_FOLDER/get-listing.sh"
+        CLEAN_BRANCH_SH = "$SH_FOLDER/clear-branch.sh"
+        DELETE_TAG_SH = "$SH_FOLDER/delete-tag.sh"
+        BUILD_SH = "$SH_FOLDER/build-mvn.sh"
+        TEST_SH = "$SH_FOLDER/test.sh"
+        DOCKER_BUILD_SH = "$SH_FOLDER/docker-build-mvn.sh"
+        TAG_PUSH_HARBOR_SH = "$SH_FOLDER/tag-push-image.sh"
+        DEPLOY_RANCHER_MS_SH = "$SH_FOLDER/deployment-ms.sh"
+
+        /*Registry Harbor */
+        PROJECT_HARBOR = "evolucion"
+        PATH_HARBOR = "harbordt.codesa.com.co"
+        KS8_FOLDER = "$PATH_JENKINS/devops-files/ks8"
+        IMG_HARBOR = "$PATH_HARBOR/$PROJECT_HARBOR/${repository_name}"
+
+        /*Generar Version del pom.xml */ 
+        pom = readMavenPom(file: "$PATH_SCM/pom.xml")
+        VERSION = pom.getVersion()
+        
+        /*Rutas y archivos txt*/
+        TXT_FOLDER = "$PATH_JENKINS/txt-folder"
+        CHANGE_NUMBER_TXT = "$TXT_FOLDER/change_number.txt"
+        BRANCH_TYPE_TXT = "$TXT_FOLDER/branch_type.txt"
+        LAST_COMMIT_TXT = "$TXT_FOLDER/lasReleaseCommitId.txt"
+        TAGS_LIST_TXT = "$TXT_FOLDER/tags.txt"
+        TAG_TXT = "$TXT_FOLDER/tag.txt"
+        LIST_CHANGE_TXT = "$TXT_FOLDER/listing.txt"
+
+        /*Jira notification*/
+        REUSED_FILES_PATH = "$PATH_JENKINS/$devops_repository"
+        GROOVY_FILES_REUSED_PATH = "$REUSED_FILES_PATH/groovy-files"
+
+        JIRA_NOTIFICATIONS_PATH = "$GROOVY_FILES_REUSED_PATH/jira-notification"
+        JIRA_NOTIFICATIONS_GROOVY = "$JIRA_NOTIFICATIONS_PATH/jira-notification.groovy"
+        LOG_BUILD_URL = "${BUILD_URL}/display/redirect"
+
+    }
+
+    stages {
+
+        stage('Cloning DevOps files') {
+            options{
+                timeout(time: 1, unit: "MINUTES")
+            }
+            steps{
+               echo "Reuse path: $REUSED_FILES_PATH"
+
+               withCredentials([usernamePassword(credentialsId: "git-bitbucket", usernameVariable: 'BITBUCKET_USER', passwordVariable: 'BITBUCKET_PASS' )]) {
+                   sh("rm -rf $devops_repository")
+                   sh("git clone --single-branch --branch $branch_devops_files http://$BITBUCKET_USER:$BITBUCKET_PASS@10.184.58.9:7990/scm/${devops_project}/devops-files.git")
+                }
+            }
+        }
+
+        stage('Create folder'){
+            steps{
+                sh("mkdir -p $TXT_FOLDER")
+            }
+        }
+
+        stage('Execution permissions'){
+            steps{
+                sh "chmod -R +x ${SH_FOLDER}"
+            }
+        }
+
+        stage('SonarQube analysis') {
+            tools {
+               jdk 'Java11'
+            }
+          steps {
+             script {
+                    def scannerHome = tool 'Sonarqube4.5';
+                    withSonarQubeEnv('sonarqube9.0.1') {
+                        sh """${tool('Sonarqube4.5')}/bin/sonar-scanner \
+                        -Dsonar.projectKey=${REPOSITORY_NAME} \
+                        -Dsonar.projectName=${REPOSITORY_NAME} \
+                        -Dsonar.sources=${PATH_SCM}/src \
+                        -Dsonar.projectBaseDir=${PATH_SCM}/src \
+                        -Dsonar.language=java \
+                        -Dsonar.java.binaries=. \
+                        -Dsonar.projectVersion=${BUILD_NUMBER}"""
+                    }
+                }
+            }
+        }
+
+        stage('Get branch feature o hotfix'){
+            steps{
+                withCredentials([
+                    usernamePassword(credentialsId: "git-bitbucket", usernameVariable: 'BITBUCKET_USER', passwordVariable: 'BITBUCKET_PASS')
+                ]){
+                    sh('$GET_BRANCH_SH $PATH_SCM $CHANGE_NUMBER_TXT $LAST_COMMIT_TXT $BITBUCKET_USER $BITBUCKET_PASS')
+                 }
+                 script{
+                     env.CHANGE_NUMBER=sh(script: "cat ${CHANGE_NUMBER_TXT}", returnStdout: true).trim()
+                 }
+            }
+        }
+        stage('Get branch type'){
+            steps{
+                sh('$GET_BRANCH_TYPE_SH $PATH_SCM $CHANGE_NUMBER_TXT $BRANCH_TYPE_TXT')
+                script {
+                    env.BRANCH_TYPE=sh(script: "cat ${BRANCH_TYPE_TXT}", returnStdout: true).trim()
+                }
+            }
+        }
+        stage('Tagging-feature-branch'){
+            steps{
+                withCredentials([usernamePassword(credentialsId: "git-bitbucket", usernameVariable: 'BITBUCKET_USER', passwordVariable: 'BITBUCKET_PASS' )]) {
+                    sh('$TAG_BRANCH_SH $PATH_SCM $CHANGE_NUMBER_TXT $BRANCH_TYPE_TXT $TAGS_LIST_TXT $BITBUCKET_USER $BITBUCKET_PASS $project_key $repository_name $TAG_TXT')
+                 }
+            }
+        }
+        stage('Differential changes'){
+            steps{
+                sh('$LIST_CHANGE_SH $PATH_SCM $CHANGE_NUMBER_TXT $BRANCH_TYPE_TXT $LIST_CHANGE_TXT')
+            }
+        }
+        stage('Build'){
+            tools {
+               jdk 'Java11'
+            }
+            steps{              
+                sh('$BUILD_SH $PATH_SCM')
+            }
+        }
+        stage('Test junit'){
+            steps{
+                sh('$TEST_SH $PATH_SCM')
+            }
+        }
+        stage('Docker Build images'){
+            steps{
+                sh('$DOCKER_BUILD_SH $PATH_SCM ${repository_name} ${VERSION}')
+            }
+        }
+        stage('Tag & Push images'){
+            steps{
+                withCredentials([usernamePassword(credentialsId: "reg-harbordt", usernameVariable: 'USER_HARBOR', passwordVariable: 'PASS_HARBOR' )]) {
+                  sh('$TAG_PUSH_HARBOR_SH $PATH_SCM ${repository_name} $USER_HARBOR $PASS_HARBOR ${VERSION}')
+                }
+            }
+        }
+        stage('Kubernetes Deploy'){
+            steps{
+                sh('$DEPLOY_RANCHER_MS_SH $KS8_FOLDER')
+            }
+        }
+    }    
+
+    post {
+        success{
+            sh('$CLEAN_BRANCH_SH $PATH_SCM $PATH_JENKINS')
+        }
+
+        /*always{
+            script{
+               echo "Post action - CHANGE_NUMBER: ${CHANGE_NUMBER}"
+               whitEnv(['JIRA_SITE=Jira']){
+                   def notification = load "${JIRA_NOTIFICATION_GROOVY}"
+                   notitication.jiraNotification()
+                }
+                echo "Warning: The build info was no written in the project ${project_key} on Jira Software due to earlier failure(s)."
+            }
+        }*/
+          
+        failure{
+            withCredentials([usernamePassword(credentialsId: "git-bitbucket", usernameVariable: 'BITBUCKET_USER', passwordVariable: 'BITBUCKET_PASS' )]) {
+                sh('$DELETE_TAG_SH $PATH_SCM $BRANCH_TYPE_TXT $CHANGE_NUMBER_TXT $BITBUCKET_USER $BITBUCKET_PASS $project_key $repository_name $TAG_TXT')
+                sh('$CLEAN_BRANCH_SH $PATH_SCM $PATH_JENKINS')
+            }
+        }
+    }
+
+    
+}

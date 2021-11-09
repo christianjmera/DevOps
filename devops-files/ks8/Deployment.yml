@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-eureka #${REPOSITORY_NAME}
+  labels:
+    app: demo-eureka #${REPOSITORY_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-eureka #${PROJECT_NAME}
+  template:
+    metadata:
+      labels:
+        app: demo-eureka #${PROJECT_NAME}
+    spec:
+      containers:
+      - name: demo-eureka #${PROJECT_NAME}
+        image: harbordt.codesa.com.co/evolucion/demo-eureka:0.0.1-SNAPSHOT #{{VERSION}}
+        ports:
+        - containerPort: 8761 
+        resources:
+          requests:
+            cpu: 50m
+            memory: 300Mi
+          limits:
+            cpu: 100m
+            memory: 700Mi
+        imagePullPolicy: Always            
+      imagePullSecrets:
+      - name: harbordt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-eureka-web
+spec:
+  selector:
+    app: demo-eureka
+  type: NodePort
+  ports:
+    - name: "http"
+      port: 8761
+      targetPort: 8761
+      nodePort: 30001
+status:
+   loadBalancer: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-eureka
+spec:
+  selector:
+    app: demo-eureka
+  ports:
+    - name: "http"
+      port: 8761
+      protocol: TCP
+      targetPort: 8761
